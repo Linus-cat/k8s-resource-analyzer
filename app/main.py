@@ -11,9 +11,12 @@ import os
 
 from app.models import (
     Quota, QuotaUpdate, ProjectUsage, 
-    ReportFile, ImportResult
+    ReportFile, ImportResult,
+    K8sConfig, K8sConfigCreate,
+    PrometheusConfig, PrometheusConfigCreate,
+    NamespaceQuota, SyncResult
 )
-from app.storage import Storage, ReportStorage, MemoryReportCache
+from app.storage import Storage, ReportStorage, MemoryReportCache, K8sConfigStorage, PrometheusConfigStorage, NamespaceQuotaStorage
 from app.parser import ReportParser
 from app.quota_manager import QuotaManager
 from app.calculator import Calculator
@@ -24,6 +27,9 @@ BASE_DIR = Path(__file__).parent.parent
 storage = ReportStorage(str(BASE_DIR / "uploads"))
 quota_storage = Storage(str(BASE_DIR / "data"))
 report_cache = MemoryReportCache()
+k8s_config_storage = K8sConfigStorage(str(BASE_DIR / "data"))
+prometheus_config_storage = PrometheusConfigStorage(str(BASE_DIR / "data"))
+namespace_quota_storage = NamespaceQuotaStorage(str(BASE_DIR / "data"))
 
 quota_manager = QuotaManager(quota_storage)
 calculator = Calculator(quota_storage)
@@ -221,3 +227,103 @@ async def get_report(date: str):
         raise HTTPException(status_code=404, detail="Report not found")
     filtered = [u for u in usages if u.cloud_id is not None]
     return filtered
+
+
+@app.get("/api/k8s/configs", response_model=List[K8sConfig])
+async def get_k8s_configs():
+    return k8s_config_storage.get_all()
+
+
+@app.post("/api/k8s/configs", response_model=K8sConfig)
+async def create_k8s_config(config: K8sConfigCreate):
+    import uuid
+    new_config = K8sConfig(
+        id=str(uuid.uuid4()),
+        name=config.name,
+        kubeconfig=config.kubeconfig,
+        use_projectquota=config.use_projectquota
+    )
+    if not k8s_config_storage.add(new_config):
+        raise HTTPException(status_code=400, detail="Config ID already exists")
+    return new_config
+
+
+@app.delete("/api/k8s/configs/{config_id}")
+async def delete_k8s_config(config_id: str):
+    if not k8s_config_storage.delete(config_id):
+        raise HTTPException(status_code=404, detail="Config not found")
+    return {"success": True}
+
+
+@app.post("/api/k8s/sync", response_model=SyncResult)
+async def sync_k8s_config(config_id: str):
+    config = k8s_config_storage.get(config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    
+    from app.k8s_client import sync_namespace_quota_from_k8s
+    result = sync_namespace_quota_from_k8s(config.kubeconfig, config.name, namespace_quota_storage)
+    return result
+
+
+@app.get("/api/k8s/quotas", response_model=List[NamespaceQuota])
+async def get_namespace_quotas(cluster: str = None):
+    if cluster:
+        return namespace_quota_storage.get_by_cluster(cluster)
+    return namespace_quota_storage.get_all()
+
+
+@app.get("/api/prometheus/configs", response_model=List[PrometheusConfig])
+async def get_prometheus_configs():
+    return prometheus_config_storage.get_all()
+
+
+@app.post("/api/prometheus/configs", response_model=PrometheusConfig)
+async def create_prometheus_config(config: PrometheusConfigCreate):
+    import uuid
+    new_config = PrometheusConfig(
+        id=str(uuid.uuid4()),
+        name=config.name,
+        url=config.url,
+        cluster_name=config.cluster_name,
+        use_accurate_sync=config.use_accurate_sync
+    )
+    if not prometheus_config_storage.add(new_config):
+        raise HTTPException(status_code=400, detail="Config ID already exists")
+    return new_config
+
+
+@app.delete("/api/prometheus/configs/{config_id}")
+async def delete_prometheus_config(config_id: str):
+    if not prometheus_config_storage.delete(config_id):
+        raise HTTPException(status_code=404, detail="Config not found")
+    return {"success": True}
+
+
+@app.post("/api/prometheus/sync", response_model=SyncResult)
+async def sync_prometheus_config(config_id: str, date: str = None):
+    from datetime import datetime, timedelta
+    
+    config = prometheus_config_storage.get(config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    
+    from app.prometheus_client import sync_prometheus_usage_accurate
+    k8s_config = k8s_config_storage.get_all()
+    matching_k8s = next((k for k in k8s_config if k.name == config.cluster_name), None)
+    
+    if not matching_k8s:
+        raise HTTPException(status_code=400, detail="No matching K8s config found for this cluster")
+    
+    if not date:
+        date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    result = sync_prometheus_usage_accurate(
+        config.url,
+        matching_k8s.kubeconfig,
+        config.cluster_name,
+        date,
+        namespace_quota_storage,
+        report_cache
+    )
+    return result

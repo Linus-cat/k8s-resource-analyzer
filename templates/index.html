@@ -71,6 +71,8 @@
             <button class="tab" data-tab="report">日报上传</button>
             <button class="tab" data-tab="view">报表查看</button>
             <button class="tab" data-tab="export">导出</button>
+            <button class="tab" data-tab="k8s">K8s接入</button>
+            <button class="tab" data-tab="prometheus">Prometheus</button>
         </div>
         
         <div id="quota" class="tab-content active">
@@ -186,6 +188,82 @@
                 <button class="btn btn-success" onclick="exportReport()">导出Excel</button>
             </div>
         </div>
+        
+        <div id="k8s" class="tab-content">
+            <div class="card">
+                <h2 title="配置K8s集群连接信息，用于从Kubernetes API同步命名空间配额">添加K8s集群配置</h2>
+                <div class="form-group">
+                    <label title="集群名称，用于标识">集群名称:</label>
+                    <input type="text" id="k8sName" placeholder="例如: prod-cluster">
+                </div>
+                <div class="form-group">
+                    <label title="Kubeconfig文件内容">Kubeconfig:</label>
+                    <textarea id="k8sKubeconfig" rows="6" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;" placeholder="粘贴kubeconfig内容"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="k8sUseProjectQuota" checked>
+                        使用ProjectQuota (取消则使用Namespace ResourceQuota)
+                    </label>
+                </div>
+                <button class="btn btn-primary" onclick="addK8sConfig()">添加</button>
+            </div>
+            
+            <div class="card">
+                <h2>K8s集群列表</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>集群名称</th>
+                            <th>配额类型</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="k8sConfigTable"></tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div id="prometheus" class="tab-content">
+            <div class="card">
+                <h2 title="配置Prometheus连接，用于从Prometheus查询资源使用数据">添加Prometheus配置</h2>
+                <div class="form-group">
+                    <label title="配置名称">配置名称:</label>
+                    <input type="text" id="prometheusName" placeholder="例如: prod-prometheus">
+                </div>
+                <div class="form-group">
+                    <label title="Prometheus API地址">Prometheus URL:</label>
+                    <input type="text" id="prometheusUrl" placeholder="例如: http://prometheus:9090">
+                </div>
+                <div class="form-group">
+                    <label title="对应的K8s集群名称">关联集群:</label>
+                    <input type="text" id="prometheusCluster" placeholder="与K8s配置中的集群名称一致">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="prometheusAccurate">
+                        精确同步 (根据副本数去重，适合滚动更新场景)
+                    </label>
+                </div>
+                <button class="btn btn-primary" onclick="addPrometheusConfig()">添加</button>
+            </div>
+            
+            <div class="card">
+                <h2>Prometheus配置列表</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>URL</th>
+                            <th>集群</th>
+                            <th>同步模式</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="prometheusConfigTable"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
     
     <script>
@@ -202,6 +280,8 @@
                 if (tab.dataset.tab === 'report') loadReports();
                 if (tab.dataset.tab === 'view') loadViewDates();
                 if (tab.dataset.tab === 'export') loadExportDates();
+                if (tab.dataset.tab === 'k8s') loadK8sConfigs();
+                if (tab.dataset.tab === 'prometheus') loadPrometheusConfigs();
             });
         });
         
@@ -408,6 +488,124 @@
             }
             
             window.location.href = `${API_BASE}/reports/export?dates=${dates.join(',')}`;
+        }
+        
+        // K8s Config Tab
+        async function loadK8sConfigs() {
+            const res = await fetch(`${API_BASE}/k8s/configs`);
+            const configs = await res.json();
+            const tbody = document.getElementById('k8sConfigTable');
+            tbody.innerHTML = configs.map(c => `
+                <tr>
+                    <td>${c.name}</td>
+                    <td>${c.use_projectquota ? 'ProjectQuota' : 'Namespace Quota'}</td>
+                    <td>
+                        <button class="btn btn-success btn-sm" onclick="syncK8sConfig('${c.id}')">同步</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteK8sConfig('${c.id}')">删除</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        async function addK8sConfig() {
+            const name = document.getElementById('k8sName').value;
+            const kubeconfig = document.getElementById('k8sKubeconfig').value;
+            const use_projectquota = document.getElementById('k8sUseProjectQuota').checked;
+            
+            if (!name || !kubeconfig) {
+                alert('请填写完整信息');
+                return;
+            }
+            
+            const res = await fetch(`${API_BASE}/k8s/configs`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, kubeconfig, use_projectquota})
+            });
+            
+            if (res.ok) {
+                document.getElementById('k8sName').value = '';
+                document.getElementById('k8sKubeconfig').value = '';
+                loadK8sConfigs();
+            } else {
+                alert('添加失败');
+            }
+        }
+        
+        async function syncK8sConfig(id) {
+            const res = await fetch(`${API_BASE}/k8s/sync`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({config_id: id})
+            });
+            const result = await res.json();
+            alert(`同步完成: 导入 ${result.imported}, 更新 ${result.updated}`);
+        }
+        
+        async function deleteK8sConfig(id) {
+            if (!confirm('确定删除?')) return;
+            await fetch(`${API_BASE}/k8s/configs/${id}`, {method: 'DELETE'});
+            loadK8sConfigs();
+        }
+        
+        // Prometheus Config Tab
+        async function loadPrometheusConfigs() {
+            const res = await fetch(`${API_BASE}/prometheus/configs`);
+            const configs = await res.json();
+            const tbody = document.getElementById('prometheusConfigTable');
+            tbody.innerHTML = configs.map(c => `
+                <tr>
+                    <td>${c.name}</td>
+                    <td>${c.url}</td>
+                    <td>${c.cluster_name}</td>
+                    <td>${c.use_accurate_sync ? '精确同步' : '普通'}</td>
+                    <td>
+                        <button class="btn btn-success btn-sm" onclick="syncPrometheusConfig('${c.id}')">同步</button>
+                        <button class="btn btn-danger btn-sm" onclick="deletePrometheusConfig('${c.id}')">删除</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        async function addPrometheusConfig() {
+            const name = document.getElementById('prometheusName').value;
+            const url = document.getElementById('prometheusUrl').value;
+            const cluster_name = document.getElementById('prometheusCluster').value;
+            const use_accurate_sync = document.getElementById('prometheusAccurate').checked;
+            
+            if (!name || !url || !cluster_name) {
+                alert('请填写完整信息');
+                return;
+            }
+            
+            const res = await fetch(`${API_BASE}/prometheus/configs`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, url, cluster_name, use_accurate_sync})
+            });
+            
+            if (res.ok) {
+                document.getElementById('prometheusName').value = '';
+                document.getElementById('prometheusUrl').value = '';
+                document.getElementById('prometheusCluster').value = '';
+                loadPrometheusConfigs();
+            } else {
+                alert('添加失败');
+            }
+        }
+        
+        async function syncPrometheusConfig(id) {
+            const res = await fetch(`${API_BASE}/prometheus/sync?config_id=${id}`, {
+                method: 'POST'
+            });
+            const result = await res.json();
+            alert(`同步完成: 导入 ${result.imported}, 更新 ${result.updated}`);
+        }
+        
+        async function deletePrometheusConfig(id) {
+            if (!confirm('确定删除?')) return;
+            await fetch(`${API_BASE}/prometheus/configs/${id}`, {method: 'DELETE'});
+            loadPrometheusConfigs();
         }
         
         loadQuotas();

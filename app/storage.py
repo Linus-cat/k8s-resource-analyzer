@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
 
-from app.models import Quota, ProjectUsage
+from app.models import Quota, ProjectUsage, K8sConfig, PrometheusConfig, NamespaceQuota
 
 
 class Storage:
@@ -136,3 +136,152 @@ class MemoryReportCache:
 
     def clear(self):
         self._cache.clear()
+
+
+class K8sConfigStorage:
+    def __init__(self, data_dir: str = "data"):
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.configs_file = self.data_dir / "k8s_configs.json"
+        self._init_file()
+
+    def _init_file(self):
+        if not self.configs_file.exists():
+            self._save_configs({})
+
+    def _load_configs(self) -> Dict[str, K8sConfig]:
+        with open(self.configs_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {k: K8sConfig(**v) for k, v in data.items()}
+
+    def _save_configs(self, configs: Dict[str, K8sConfig]):
+        with open(self.configs_file, "w", encoding="utf-8") as f:
+            json.dump({k: v.model_dump() for k, v in configs.items()}, f, ensure_ascii=False, indent=2)
+
+    def get_all(self) -> List[K8sConfig]:
+        return list(self._load_configs().values())
+
+    def get(self, id: str) -> Optional[K8sConfig]:
+        return self._load_configs().get(id)
+
+    def add(self, config: K8sConfig) -> bool:
+        configs = self._load_configs()
+        if config.id in configs:
+            return False
+        configs[config.id] = config
+        self._save_configs(configs)
+        return True
+
+    def update(self, id: str, config: K8sConfig) -> bool:
+        configs = self._load_configs()
+        if id not in configs:
+            return False
+        configs[id] = config
+        self._save_configs(configs)
+        return True
+
+    def delete(self, id: str) -> bool:
+        configs = self._load_configs()
+        if id not in configs:
+            return False
+        del configs[id]
+        self._save_configs(configs)
+        return True
+
+
+class PrometheusConfigStorage:
+    def __init__(self, data_dir: str = "data"):
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.configs_file = self.data_dir / "prometheus_configs.json"
+        self._init_file()
+
+    def _init_file(self):
+        if not self.configs_file.exists():
+            self._save_configs({})
+
+    def _load_configs(self) -> Dict[str, PrometheusConfig]:
+        with open(self.configs_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {k: PrometheusConfig(**v) for k, v in data.items()}
+
+    def _save_configs(self, configs: Dict[str, PrometheusConfig]):
+        with open(self.configs_file, "w", encoding="utf-8") as f:
+            json.dump({k: v.model_dump() for k, v in configs.items()}, f, ensure_ascii=False, indent=2)
+
+    def get_all(self) -> List[PrometheusConfig]:
+        return list(self._load_configs().values())
+
+    def get(self, id: str) -> Optional[PrometheusConfig]:
+        return self._load_configs().get(id)
+
+    def add(self, config: PrometheusConfig) -> bool:
+        configs = self._load_configs()
+        if config.id in configs:
+            return False
+        configs[config.id] = config
+        self._save_configs(configs)
+        return True
+
+    def update(self, id: str, config: PrometheusConfig) -> bool:
+        configs = self._load_configs()
+        if id not in configs:
+            return False
+        configs[id] = config
+        self._save_configs(configs)
+        return True
+
+    def delete(self, id: str) -> bool:
+        configs = self._load_configs()
+        if id not in configs:
+            return False
+        del configs[id]
+        self._save_configs(configs)
+        return True
+
+
+class NamespaceQuotaStorage:
+    def __init__(self, data_dir: str = "data"):
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.quotas_file = self.data_dir / "namespace_quotas.json"
+        self._init_file()
+
+    def _init_file(self):
+        if not self.quotas_file.exists():
+            self._save_quotas({})
+
+    def _load_quotas(self) -> Dict[str, NamespaceQuota]:
+        with open(self.quotas_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {k: NamespaceQuota(**v) for k, v in data.items()}
+
+    def _save_quotas(self, quotas: Dict[str, NamespaceQuota]):
+        with open(self.quotas_file, "w", encoding="utf-8") as f:
+            json.dump({k: v.model_dump() for k, v in quotas.items()}, f, ensure_ascii=False, indent=2)
+
+    def get_all(self) -> List[NamespaceQuota]:
+        return list(self._load_quotas().values())
+
+    def get(self, cluster_name: str, namespace: str) -> Optional[NamespaceQuota]:
+        key = f"{cluster_name}__{namespace}"
+        return self._load_quotas().get(key)
+
+    def save(self, quota: NamespaceQuota):
+        quotas = self._load_quotas()
+        key = f"{quota.cluster_name}__{quota.namespace}"
+        quotas[key] = quota
+        self._save_quotas(quotas)
+
+    def get_by_cluster(self, cluster_name: str) -> List[NamespaceQuota]:
+        all_quotas = self._load_quotas()
+        return [q for q in all_quotas.values() if q.cluster_name == cluster_name]
+
+    def delete(self, cluster_name: str, namespace: str) -> bool:
+        key = f"{cluster_name}__{namespace}"
+        quotas = self._load_quotas()
+        if key not in quotas:
+            return False
+        del quotas[key]
+        self._save_quotas(quotas)
+        return True
