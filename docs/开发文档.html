@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: A4;
+    margin: 2cm 2cm 2cm 2cm;
+    @bottom-center {
+        content: counter(page);
+    }
+}
+
+body {
+    font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "SimSun", sans-serif;
+    font-size: 12pt;
+    line-height: 1.5;
+    color: #333;
+    text-align: justify;
+}
+
+h1 {
+    font-size: 24pt;
+    font-weight: bold;
+    color: #1a1a1a;
+    text-align: center;
+    margin-top: 0;
+    margin-bottom: 30pt;
+    padding-bottom: 15pt;
+    border-bottom: 2px solid #2c3e50;
+}
+
+h2 {
+    font-size: 16pt;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-top: 25pt;
+    margin-bottom: 15pt;
+    padding-bottom: 8pt;
+    border-bottom: 1px solid #ecf0f1;
+    page-break-before: auto;
+}
+
+h3 {
+    font-size: 13pt;
+    font-weight: bold;
+    color: #34495e;
+    margin-top: 18pt;
+    margin-bottom: 10pt;
+}
+
+p {
+    font-size: 11pt;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0;
+    text-indent: 2em;
+}
+
+.author-info {
+    font-size: 11pt;
+    line-height: 1.8;
+    margin-bottom: 30pt;
+    text-align: left;
+}
+
+.author-info p {
+    margin: 5pt 0;
+    text-indent: 0;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 15pt 0;
+    font-size: 10pt;
+}
+
+th {
+    background-color: #34495e;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    padding: 10pt 8pt;
+    border: 1px solid #2c3e50;
+}
+
+td {
+    padding: 8pt;
+    border: 1px solid #bdc3c7;
+    text-align: center;
+}
+
+tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+code {
+    font-family: "Courier New", monospace;
+    font-size: 10pt;
+    background-color: #f5f5f5;
+    padding: 2pt 5pt;
+    border-radius: 3pt;
+    color: #c0392b;
+}
+
+pre {
+    font-family: "Courier New", monospace;
+    font-size: 9pt;
+    background-color: #f8f9fa;
+    padding: 12pt;
+    border-radius: 5pt;
+    border-left: 3px solid #3498db;
+    overflow-x: auto;
+    margin: 12pt 0;
+    text-indent: 0;
+}
+
+ul, ol {
+    margin: 10pt 0 10pt 25pt;
+}
+
+li {
+    font-size: 11pt;
+    line-height: 1.5;
+    margin: 6pt 0;
+}
+
+strong {
+    font-weight: bold;
+}
+</style>
+</head>
+<body>
+<h1>K8s集群资源使用率统计分析工具 - 开发文档</h1>
+<h2>文档信息</h2>
+<li>**版本**: 1.0.0</li>
+<li>**创建日期**: 2026-02-25</li>
+<li>**技术栈**: Python 3.10 + FastAPI + openpyxl</li>
+<li>**作者**: 骆玉宝</li>
+<li>**邮箱**: ybluo@alauda.io</li>
+<li>**使用AI工具**: OpenCode (big-pickle模型)</li>
+<p>---</p>
+<h2>1. 项目概述</h2>
+<h3>1.1 背景与目标</h3>
+<p>随着Kubernetes集群规模的不断扩大，对集群资源使用情况进行有效监控和分析变得尤为重要。本工具旨在实现多集群、多维度的资源使用数据自动化统计与分析，支撑项目级资源配额使用率的日常监控与管理。</p>
+<h3>1.2 核心功能</h3>
+<p>1. <strong>资源层级管理</strong>：项目 → 命名空间的层级关系，支持CPU、内存配额配置</p>
+<p>2. <strong>日报数据解析</strong>：从文件读取各命名空间的CPU、内存使用数据</p>
+<p>3. <strong>使用率计算</strong>：按项目汇总资源使用量，结合配额计算使用率</p>
+<p>4. <strong>数据导出</strong>：生成标准化Excel报告</p>
+<p>---</p>
+<h2>2. 系统架构</h2>
+<h3>2.1 技术架构</h3>
+<pre><code>
+┌─────────────────────────────────────────────────────────┐
+│                    Web浏览器 (前端)                       │
+│              HTML + JavaScript (Jinja2)                  │
+└─────────────────────────────────────────────────────────┘
+│
+▼
+┌─────────────────────────────────────────────────────────┐
+│                   FastAPI (后端服务)                      │
+│   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐      │
+│   │  配额管理   │ │  日报处理   │ │   Excel导出  │      │
+│   └─────────────┘ └─────────────┘ └─────────────┘      │
+└─────────────────────────────────────────────────────────┘
+│
+┌───────────────┼───────────────┐
+▼               ▼               ▼
+┌───────────�┐  ┌───────────┐  ┌───────────┐
+│ JSON存储   │  │  内存缓存  │  │  openpyxl │
+│(quotas.json)│  │(ReportCache)│  │  Excel处理 │
+└───────────┘  └───────────┘  └───────────┘
+</code></pre>
+<h3>2.2 项目结构</h3>
+<pre><code>
+k8s-resource-analyzer/
+├── app/
+│   ├── __init__.py           # 包初始化
+│   ├── main.py               # FastAPI入口、路由定义
+│   ├── models.py              # Pydantic数据模型
+│   ├── storage.py             # JSON存储与内存缓存
+│   ├── parser.py              # 日报文件解析器
+│   ├── quota_manager.py       # 配额管理（CRUD+Excel导入）
+│   ├── calculator.py          # 使用率计算逻辑
+│   └── exporter.py            # Excel导出功能
+├── templates/
+│   └── index.html            # 前端页面
+├── data/
+│   └── quotas.json           # 配额持久化存储
+├── uploads/                  # 上传文件临时目录
+├── requirements.txt          # Python依赖
+└── README.md                 # 项目说明
+</code></pre>
+<p>---</p>
+<h2>3. 安装与运行</h2>
+<h3>3.1 环境要求</h3>
+<li>Python 3.10+</li>
+<li>pip 包管理器</li>
+<h3>3.2 安装步骤</h3>
+<pre><code>
+# 1. 进入项目目录
+cd k8s-resource-analyzer
+
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 启动服务
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+</code></pre>
+<h3>3.3 访问方式</h3>
+<li>本地访问：http://localhost:8000</li>
+<li>局域网访问：http://<服务器IP>:8000</li>
+<p>---</p>
+<h2>4. 使用指南</h2>
+<h3>4.1 配额管理</h3>
+<p>#### 4.1.1 导入配额</p>
+<p>点击"下载模板"获取配额导入模板，模板格式如下：</p>
+<table>
+<tr><td>云序号</td><td>项目名称</td><td>CPU配额(核)</td><td>内存配额(GB)</td></tr>
+<tr><td>inst_xxx</td><td>项目A</td><td>10</td><td>50</td></tr>
+</table>
+<p>注意事项：</p>
+<li>云序号 + 项目名称为唯一键</li>
+<li>支持增量导入（相同键更新，不同键新增）</li>
+<p>#### 4.1.2 手动修改配额</p>
+<p>在配额列表中，每个项目都有"修改"按钮，点击后可以单独修改该项目的：</p>
+<li>项目名称</li>
+<li>CPU配额（核）</li>
+<li>内存配额（GB）</li>
+<p>修改完成后点击"保存"即可生效。</p>
+<p>#### 4.1.3 删除配额</p>
+<p>在配额列表中点击"删除"按钮即可移除对应项目的配额信息。</p>
+<h3>4.2 日报上传</h3>
+<p>#### 4.2.1 文件格式要求</p>
+<p>文件名格式：<code><em>_Day_report_YYYY-MM-DD</em></code>（包含日期即可）</p>
+<p>文件内容格式：</p>
+<pre><code>
+项目名称;命名空间名称;CPU使用总量(核);内存使用总量(bytes)
+示例项目A;namespace-a;3.5;16106127360
+示例项目A;namespace-b;2.1;9663676416
+</code></pre>
+<p>#### 4.2.2 上传方式</p>
+<p>1. 点击"下载模板"获取示例文件</p>
+<p>2. 点击上传区域或拖拽文件到上传区域</p>
+<p>3. 支持同时上传多个文件</p>
+<p>4. 同日期数据会自动累加</p>
+<h3>4.3 报表查看</h3>
+<p>1. 切换到"报表查看"标签</p>
+<p>2. 选择日期</p>
+<p>3. 查看各项目的CPU/内存使用量及使用率</p>
+<p>4. 使用率按颜色区分：高(>=80%)、中(>=50%)、低(<50%)</p>
+<h3>4.4 导出报告</h3>
+<p>1. 切换到"导出"标签</p>
+<p>2. 勾选要导出的日期</p>
+<p>3. 点击"导出Excel"按钮</p>
+<p>导出文件格式：</p>
+<table>
+<tr><td>云序号</td><td>日期</td><td>cpu使用率</td><td>内存使用率</td></tr>
+<tr><td>inst_xxx</td><td>2026/2/9</td><td>0.8000</td><td>0.6500</td></tr>
+</table>
+<p>注意：</p>
+<li>使用率为小数形式（如80% = 0.8000）</li>
+<li>保留4位小数</li>
+<li>自动过滤无配额的項目</li>
+<p>---</p>
+<h2>5. API接口文档</h2>
+<h3>5.1 配额管理</h3>
+<table>
+<tr><td>方法</td><td>路径</td><td>说明</td></tr>
+<tr><td>GET</td><td>/api/quotas</td><td>获取所有配额列表</td></tr>
+<tr><td>POST</td><td>/api/quotas</td><td>添加单个配额</td></tr>
+<tr><td>PUT</td><td>/api/quotas/{cloud_id}</td><td>修改配额</td></tr>
+<tr><td>DELETE</td><td>/api/quotas/{cloud_id}</td><td>删除配额</td></tr>
+<tr><td>POST</td><td>/api/quotas/import</td><td>Excel导入配额</td></tr>
+</table>
+<h3>5.2 日报管理</h3>
+<table>
+<tr><td>方法</td><td>路径</td><td>说明</td></tr>
+<tr><td>POST</td><td>/api/reports/upload</td><td>上传日报文件</td></tr>
+<tr><td>GET</td><td>/api/reports</td><td>获取已上传日期列表</td></tr>
+<tr><td>GET</td><td>/api/reports/{date}</td><td>获取指定日期数据</td></tr>
+<tr><td>GET</td><td>/api/reports/export</td><td>导出Excel报告</td></tr>
+</table>
+<h3>5.3 模板下载</h3>
+<table>
+<tr><td>方法</td><td>路径</td><td>说明</td></tr>
+<tr><td>GET</td><td>/api/templates/quota</td><td>下载配额导入模板</td></tr>
+<tr><td>GET</td><td>/api/templates/report</td><td>下载日报模板</td></tr>
+</table>
+<p>---</p>
+<h2>6. 核心模块说明</h2>
+<h3>6.1 models.py - 数据模型</h3>
+<pre><code>
+class Quota(BaseModel):
+cloud_id: str          # 云序号（）
+project_name唯一键: str      # 项目名称
+cpu_quota: float       # CPU配额（核）
+memory_quota: float    # 内存配额（GB）
+
+class ProjectUsage(BaseModel):
+project_name: str
+cloud_id: Optional[str]
+cpu_usage: float
+memory_usage: float
+cpu_rate: Optional[float]
+memory_rate: Optional[float]
+</code></pre>
+<h3>6.2 parser.py - 日报解析</h3>
+<li>从文件名提取日期（支持多种格式）</li>
+<li>解析文本格式的日报数据</li>
+<li>字节单位转换为GB</li>
+<h3>6.3 calculator.py - 计算器</h3>
+<li>按项目聚合命名空间使用量</li>
+<li>计算CPU/内存使用率</li>
+<li>使用率上限100%</li>
+<h3>6.4 exporter.py - 导出器</h3>
+<li>生成Excel工作簿</li>
+<li>日期格式转换（Y/M/D）</li>
+<li>使用率转换为小数格式</li>
+<p>---</p>
+<h2>7. 部署建议</h2>
+<h3>7.1 生产环境部署</h3>
+<pre><code>
+# 使用Gunicorn替代uvicorn
+pip install gunicorn
+gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000
+</code></pre>
+<h3>7.2 Nginx反向代理（可选）</h3>
+<pre><code>
+server {
+listen 80;
+server_name your-domain.com;
+
+location / {
+proxy_pass http://127.0.0.1:8000;
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+}
+}
+</code></pre>
+<p>---</p>
+<h2>8. 未来优化方向</h2>
+<h3>8.1 自动获取K8s配额</h3>
+<p><strong>目标</strong>：通过Token+API对接K8s集群，自动获取项目配额，无需手动维护</p>
+<p><strong>实现方案</strong>：</p>
+<p>1. 配置K8s集群访问凭证（kubeconfig或Token）</p>
+<p>2. 调用Kubernetes API获取Namespace资源配额</p>
+<p>3. 定时同步配额数据到本地存储</p>
+<p>4. 区分自动获取的配额与手动维护的配额</p>
+<p><strong>涉及API</strong>：</p>
+<li>`GET /api/v1/namespaces/{namespace}/resourcequota`</li>
+<li>`GET /api/v1/namespaces`</li>
+<h3>8.2 Prometheus数据自动采集</h3>
+<p><strong>目标</strong>：通过Prometheus接口获取监控数据，自动汇总命名空间资源使用量</p>
+<p><strong>实现方案</strong>：</p>
+<p>1. 配置Prometheus连接信息</p>
+<p>2. 定义查询语句获取CPU/内存使用量</p>
+<li>CPU：`sum(rate(container_cpu_usage_seconds_total{namespace!=""}[1d])) by (namespace)`</li>
+<li>内存：`sum(container_memory_working_set_bytes) by (namespace)`</li>
+<p>3. 定时任务自动拉取数据</p>
+<p>4. 生成日报文件或直接存储到数据库</p>
+<p><strong>涉及API</strong>：</p>
+<li>Prometheus Query API</li>
+<li>Prometheus Query Range API</li>
+<h3>8.3 容器化部署</h3>
+<p><strong>目标</strong>：将工具制作成Docker镜像，方便部署和分发</p>
+<p><strong>Dockerfile示例</strong>：</p>
+<pre><code>
+FROM python:3.10-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+</code></pre>
+<p><strong>构建与运行</strong>：</p>
+<pre><code>
+docker build -t k8s-resource-analyzer .
+docker run -d -p 8000:8000 -v ./data:/app/data k8s-resource-analyzer
+</code></pre>
+<h3>8.4 其他优化方向</h3>
+<p>1. <strong>数据持久化</strong>：从内存存储改为SQLite/PostgreSQL</p>
+<p>2. <strong>用户认证</strong>：增加登录功能，支持多用户</p>
+<p>3. <strong>告警功能</strong>：使用率超过阈值时发送通知</p>
+<p>4. <strong>历史趋势</strong>：展示历史使用率变化趋势图</p>
+<p>5. <strong>多集群支持</strong>：支持同时管理多个K8s集群</p>
+<p>---</p>
+<h2>9. 附录</h2>
+<h3>9.1 依赖清单</h3>
+<pre><code>
+fastapi==0.109.0
+uvicorn==0.27.0
+openpyxl==3.1.2
+python-multipart==0.0.6
+pydantic==2.5.3
+jinja2==3.1.3
+</code></pre>
+<h3>9.2 配置文件示例</h3>
+<p>无配置文件，所有参数通过代码或Web界面管理。</p>
+<h3>9.3 常见问题</h3>
+<p><strong>Q1: 导出时提示"Report not found"</strong></p>
+<p>A: 确保已上传日报文件，且该日期有匹配配额的項目。</p>
+<p><strong>Q2: 上传文件解析失败</strong></p>
+<p>A: 检查文件格式是否符合要求，每行格式为：<code>项目名称;命名空间;CPU;内存(bytes)</code></p>
+<p><strong>Q3: 使用率显示为空</strong></p>
+<p>A: 确保配额中的项目名称与日报中的项目名称完全匹配。</p>
+<p>---</p>
+<p><strong>文档结束</strong></p></body></html>
