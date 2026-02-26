@@ -54,3 +54,21 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | GET | /api/reports | 获取已上传日期列表 |
 | GET | /api/reports/{date} | 获取指定日期报表 |
 | GET | /api/reports/export?dates=... | 导出Excel |
+
+## 效果图
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/281b3d9e-b222-4131-afbf-f4151415166e" />
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/0572a801-5b1d-4a76-a061-96b1c02a64f2" />
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/7456fe36-e19d-4bae-b398-208593aedd61" />
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/14818d84-b69b-4268-ad05-ecab513e033a" />
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/f19c88cb-647a-46f6-8e86-99da4933fc68" />
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/53a3248d-04d0-4d47-b7ea-0af734b9cf0b" />
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/6decc47c-ebe2-4b29-8df7-5936d1c95141" />
+<img width="2560" height="1271" alt="image" src="https://github.com/user-attachments/assets/f74c9254-665f-406e-8b35-cfecc9554e30" />
+
+
+
+
+
+
+
+
