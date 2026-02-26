@@ -270,13 +270,13 @@
                     <details>
                         <summary style="cursor:pointer;color:#007bff;">点击查看PromQL规则</summary>
                         <div style="margin-top:10px;padding:10px;background:#f5f5f5;border-radius:4px;">
-                            <p><strong>CPU使用量查询:</strong></p>
-                            <code style="display:block;background:#fff;padding:8px;border-radius:4px;margin:5px 0;">sum by (namespace)(irate(container_cpu_usage_seconds_total{container!="", namespace!=""}[5m]))</code>
-                            <p style="margin-top:8px;"><strong>说明:</strong> 使用irate计算5分钟内的CPU使用率，适合滚动更新场景，可避免副本数变化导致的数据抖动</p>
+                            <p><strong>CPU使用量查询（按Pod聚合的峰值求和）:</strong></p>
+                            <code style="display:block;background:#fff;padding:8px;border-radius:4px;margin:5px 0;word-break:break-all;">sum(max by (pod_name)(max_over_time((irate(container_cpu_usage_seconds_total{namespace="$i",container!="",container!="POD"}[5m]))[1d:])))</code>
+                            <p style="margin-top:8px;"><strong>说明:</strong> 使用irate计算5分钟内的CPU增长率，再用max_over_time取1天内的最大值，按pod聚合后求和。避免滚动更新时新旧副本交替导致的数据抖动。</p>
                             
-                            <p style="margin-top:15px;"><strong>内存使用量查询:</strong></p>
-                            <code style="display:block;background:#fff;padding:8px;border-radius:4px;margin:5px 0;">max by (namespace)(container_memory_working_set_bytes{container!="", namespace!=""})</code>
-                            <p style="margin-top:8px;"><strong>说明:</strong> 使用max_over_time获取1天内的最大内存使用量，避免内存波动影响判断</p>
+                            <p style="margin-top:15px;"><strong>内存使用量查询（按Pod聚合的峰值求和）:</strong></p>
+                            <code style="display:block;background:#fff;padding:8px;border-radius:4px;margin:5px 0;word-break:break-all;">sum(max by (pod_name)(max_over_time(container_memory_usage_bytes{namespace="$i",container!="",container!="POD"}[1d])))</code>
+                            <p style="margin-top:8px;"><strong>说明:</strong> 使用container_memory_usage_bytes获取内存使用量，用max_over_time取1天内的最大值，按pod聚合后求和。避免内存瞬时波动影响判断。</p>
                             
                             <p style="margin-top:15px;"><strong>精确同步模式:</strong></p>
                             <p>根据K8s API获取的期望副本数(replicas)对Prometheus数据进行去重处理，公式: 实际值 × (期望副本数 / 实际Pod数)</p>
