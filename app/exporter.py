@@ -17,15 +17,15 @@ class ExcelExporter:
         ws = wb.active
         ws.title = "Resource Usage Report"
 
-        headers = ["云序号", "日期", "cpu使用率", "内存使用率"]
+        headers = ["主键", "周期", "CPU利用率", "内存利用率"]
         ws.append(headers)
 
         formatted_date = self.calculator.format_date(date)
 
         for usage in project_usages:
             cloud_id = usage.cloud_id or ""
-            cpu_rate = round(usage.cpu_rate / 100, 4) if usage.cpu_rate is not None else ""
-            memory_rate = round(usage.memory_rate / 100, 4) if usage.memory_rate is not None else ""
+            cpu_rate = round(usage.cpu_rate / 100, 10) if usage.cpu_rate is not None else ""
+            memory_rate = round(usage.memory_rate / 100, 10) if usage.memory_rate is not None else ""
 
             ws.append([cloud_id, formatted_date, cpu_rate, memory_rate])
 
@@ -53,7 +53,7 @@ class ExcelExporter:
         ws = wb.active
         ws.title = "Resource Usage Report"
 
-        headers = ["云序号", "日期", "cpu使用率", "内存使用率"]
+        headers = ["主键", "周期", "CPU利用率", "内存利用率"]
         ws.append(headers)
 
         for date, project_usages in reports:
@@ -61,8 +61,8 @@ class ExcelExporter:
 
             for usage in project_usages:
                 cloud_id = usage.cloud_id or ""
-                cpu_rate = round(usage.cpu_rate / 100, 4) if usage.cpu_rate is not None else ""
-                memory_rate = round(usage.memory_rate / 100, 4) if usage.memory_rate is not None else ""
+                cpu_rate = round(usage.cpu_rate / 100, 10) if usage.cpu_rate is not None else ""
+                memory_rate = round(usage.memory_rate / 100, 10) if usage.memory_rate is not None else ""
 
                 ws.append([cloud_id, formatted_date, cpu_rate, memory_rate])
 

@@ -327,3 +327,48 @@ async def sync_prometheus_config(config_id: str, date: str = None):
         report_cache
     )
     return result
+
+
+@app.post("/api/prometheus/import", response_model=ImportResult)
+async def import_prometheus_configs(file: UploadFile = File(...)):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(tmp_path)
+        ws = wb.active
+        
+        imported = 0
+        errors = []
+        
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            try:
+                name, url, cluster_name, use_accurate_sync = row
+                if not name or not url or not cluster_name:
+                    errors.append(f"第{row_idx}行: 缺少必填字段")
+                    continue
+                
+                import uuid
+                new_config = PrometheusConfig(
+                    id=str(uuid.uuid4()),
+                    name=str(name),
+                    url=str(url),
+                    cluster_name=str(cluster_name),
+                    use_accurate_sync=bool(use_accurate_sync) if use_accurate_sync is not None else False
+                )
+                
+                if prometheus_config_storage.add(new_config):
+                    imported += 1
+                else:
+                    errors.append(f"第{row_idx}行: 配置已存在")
+            except Exception as e:
+                errors.append(f"第{row_idx}行: {str(e)}")
+        
+        return ImportResult(success=True, imported=imported, updated=0, errors=errors)
+    except Exception as e:
+        return ImportResult(success=False, imported=0, updated=0, errors=[f"读取文件失败: {str(e)}"])
+    finally:
+        os.unlink(tmp_path)

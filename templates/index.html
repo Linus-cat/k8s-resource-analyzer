@@ -67,12 +67,12 @@
         <h1>K8s资源使用率分析工具</h1>
         
         <div class="tabs">
-            <button class="tab active" data-tab="quota">配额管理</button>
-            <button class="tab" data-tab="report">日报上传</button>
-            <button class="tab" data-tab="view">报表查看</button>
-            <button class="tab" data-tab="export">导出</button>
-            <button class="tab" data-tab="k8s">K8s接入</button>
-            <button class="tab" data-tab="prometheus">Prometheus</button>
+            <button class="tab active" data-tab="quota" title="管理项目配额，支持导入Excel和手动添加">配额管理</button>
+            <button class="tab" data-tab="report" title="上传日报文件，支持多文件批量上传">日报上传</button>
+            <button class="tab" data-tab="view" title="查看已上传的日报数据，支持按日期筛选">报表查看</button>
+            <button class="tab" data-tab="export" title="导出Excel报告，支持多日期选择">导出</button>
+            <button class="tab" data-tab="k8s" title="配置K8s集群，从Kubernetes API同步命名空间配额">K8s接入</button>
+            <button class="tab" data-tab="prometheus" title="配置Prometheus，从监控系统同步资源使用数据">Prometheus</button>
         </div>
         
         <div id="quota" class="tab-content active">
@@ -262,6 +262,28 @@
                     </thead>
                     <tbody id="prometheusConfigTable"></tbody>
                 </table>
+            </div>
+            
+            <div class="card">
+                <h2 title="PromQL查询规则说明，用于理解数据来源">PromQL查询规则说明</h2>
+                <div style="font-size:13px;color:#666;">
+                    <details>
+                        <summary style="cursor:pointer;color:#007bff;">点击查看PromQL规则</summary>
+                        <div style="margin-top:10px;padding:10px;background:#f5f5f5;border-radius:4px;">
+                            <p><strong>CPU使用量查询:</strong></p>
+                            <code style="display:block;background:#fff;padding:8px;border-radius:4px;margin:5px 0;">sum by (namespace)(irate(container_cpu_usage_seconds_total{container!="", namespace!=""}[5m]))</code>
+                            <p style="margin-top:8px;"><strong>说明:</strong> 使用irate计算5分钟内的CPU使用率，适合滚动更新场景，可避免副本数变化导致的数据抖动</p>
+                            
+                            <p style="margin-top:15px;"><strong>内存使用量查询:</strong></p>
+                            <code style="display:block;background:#fff;padding:8px;border-radius:4px;margin:5px 0;">max by (namespace)(container_memory_working_set_bytes{container!="", namespace!=""})</code>
+                            <p style="margin-top:8px;"><strong>说明:</strong> 使用max_over_time获取1天内的最大内存使用量，避免内存波动影响判断</p>
+                            
+                            <p style="margin-top:15px;"><strong>精确同步模式:</strong></p>
+                            <p>根据K8s API获取的期望副本数(replicas)对Prometheus数据进行去重处理，公式: 实际值 × (期望副本数 / 实际Pod数)</p>
+                            <p>适用于滚动更新期间，避免新旧副本交替导致的数据偏高</p>
+                        </div>
+                    </details>
+                </div>
             </div>
         </div>
     </div>
