@@ -67,15 +67,32 @@
         <h1>K8s资源使用率分析工具</h1>
         
         <div class="tabs">
-            <button class="tab active" data-tab="quota" title="管理项目配额，支持导入Excel和手动添加">配额管理</button>
-            <button class="tab" data-tab="report" title="上传日报文件，支持多文件批量上传">日报上传</button>
-            <button class="tab" data-tab="view" title="查看已上传的日报数据，支持按日期筛选">报表查看</button>
-            <button class="tab" data-tab="export" title="导出Excel报告，支持多日期选择">导出</button>
-            <button class="tab" data-tab="k8s" title="配置K8s集群，从Kubernetes API同步命名空间配额">K8s接入</button>
-            <button class="tab" data-tab="prometheus" title="配置Prometheus，从监控系统同步资源使用数据">Prometheus</button>
+            <button class="tab active" data-tab="quota" title="管理项目级配额，限制项目的总CPU和内存使用量">项目配额管理</button>
+            <button class="tab" data-tab="namespace-quota" title="管理命名空间级配额，显示CPU、内存、存储、Pod等资源限制和已使用量">命名空间配额</button>
+            <button class="tab" data-tab="report" title="上传日报文件，系统将解析文件并计算项目资源使用率，支持多文件批量上传">日报上传</button>
+            <button class="tab" data-tab="view" title="查看已上传的日报数据，按日期筛选显示各项目的CPU和内存使用率">报表查看</button>
+            <button class="tab" data-tab="export" title="导出Excel报告，选择多个日期生成汇总报表，支持主键/周期/利用率格式">导出</button>
+            <button class="tab" data-tab="scheduler" title="配置定时任务，自动在指定时间从K8s API同步配额和从Prometheus同步使用数据">定时任务</button>
+            <button class="tab" data-tab="k8s" title="配置K8s集群连接信息，用于从Kubernetes API获取命名空间配额，支持批量导入多个集群">K8s接入</button>
+            <button class="tab" data-tab="prometheus" title="配置Prometheus连接，用于查询资源使用数据，支持批量导入多个Prometheus实例">Prometheus接入</button>
         </div>
         
         <div id="quota" class="tab-content active">
+            <div class="card">
+                <h2>从K8s同步项目配额</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="quotaSelectAll" onchange="toggleAllQuotaClusters(this.checked)"> 
+                        <strong>全选</strong>
+                    </label>
+                    <div id="quotaK8sClusterList" style="max-height:150px;overflow-y:auto;border:1px solid #ddd;padding:10px;">
+                        <!-- 集群列表将通过JS加载 -->
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="syncProjectQuotaFromK8s()">同步项目配额</button>
+                <div id="quotaSyncResult"></div>
+            </div>
+            
             <div class="card">
                 <h2>导入配额</h2>
                 <div class="form-group">
@@ -127,6 +144,65 @@
                     <button class="btn btn-success" onclick="saveQuota()">保存</button>
                     <button class="btn btn-secondary" onclick="closeModal()">取消</button>
                 </div>
+            </div>
+        </div>
+        
+        <div id="namespace-quota" class="tab-content">
+            <div class="card">
+                <h2>从K8s同步命名空间配额</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="nsQuotaSelectAll" onchange="toggleAllNsQuotaClusters(this.checked)"> 
+                        <strong>全选</strong>
+                    </label>
+                    <div id="nsQuotaK8sClusterList" style="max-height:150px;overflow-y:auto;border:1px solid #ddd;padding:10px;">
+                        <!-- 集群列表将通过JS加载 -->
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="syncNsQuotaFromK8s()">同步命名空间配额</button>
+                <div id="nsQuotaSyncResult"></div>
+            </div>
+            
+            <div class="card">
+                <h2>手动导入命名空间配额</h2>
+                <div class="form-group">
+                    <input type="file" id="nsQuotaFile" accept=".xlsx" style="display: none;">
+                    <button class="btn btn-success" onclick="document.getElementById('nsQuotaFile').click()">选择Excel文件</button>
+                    <button class="btn btn-success" onclick="importNsQuota()">导入</button>
+                    <button class="btn btn-secondary" onclick="downloadNsQuotaTemplate()">下载模板</button>
+                </div>
+                <div id="nsQuotaImportResult"></div>
+            </div>
+            
+            <div class="card">
+                <h2>命名空间配额列表</h2>
+                <div class="form-group">
+                    <label>筛选集群:</label>
+                    <select id="nsQuotaFilterCluster" onchange="loadNamespaceQuotas()" style="padding:8px;">
+                        <option value="">全部</option>
+                    </select>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>集群</th>
+                            <th>命名空间</th>
+                            <th>项目</th>
+                            <th>CPU配额</th>
+                            <th>CPU已用</th>
+                            <th>CPU使用率</th>
+                            <th>内存配额</th>
+                            <th>内存已用</th>
+                            <th>内存使用率</th>
+                            <th>Pod配额</th>
+                            <th>Pod已用</th>
+                            <th>存储配额</th>
+                            <th>存储已用</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nsQuotaTable"></tbody>
+                </table>
             </div>
         </div>
         
@@ -182,10 +258,51 @@
             <div class="card">
                 <h2>导出Excel报告</h2>
                 <div class="form-group">
-                    <label>选择要导出的日期:</label>
+                    <label>
+                        <input type="checkbox" id="exportSelectAll" onchange="toggleAllExportDates(this.checked)"> 
+                        <strong>全选</strong>
+                    </label>
                     <div class="checkbox-list" id="exportDateList"></div>
                 </div>
                 <button class="btn btn-success" onclick="exportReport()">导出Excel</button>
+            </div>
+        </div>
+        
+        <div id="scheduler" class="tab-content">
+            <div class="card">
+                <h2 title="配置定时任务，自动同步K8s集群配额和Prometheus使用数据">定时任务配置</h2>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="schedulerEnabled">
+                        启用定时任务
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>命名空间配额同步时间 (小时):</label>
+                    <input type="number" id="schedulerNsQuotaHour" min="0" max="23" value="2">
+                    <small style="color:#666;">每天几点执行命名空间配额同步</small>
+                </div>
+                <div class="form-group">
+                    <label>Prometheus同步时间 (小时):</label>
+                    <input type="number" id="schedulerPrometheusHour" min="0" max="23" value="3">
+                    <small style="color:#666;">每天几点执行Prometheus数据同步</small>
+                </div>
+                <div class="form-group">
+                    <label>同步间隔 (小时):</label>
+                    <input type="number" id="schedulerInterval" min="1" max="168" value="24">
+                    <small style="color:#666;">定时任务检查间隔（当前未使用）</small>
+                </div>
+                <button class="btn btn-primary" onclick="saveSchedulerConfig()">保存配置</button>
+                <div id="schedulerResult"></div>
+            </div>
+            
+            <div class="card">
+                <h2>定时任务说明</h2>
+                <ul style="margin-left:20px;color:#666;">
+                    <li>命名空间配额同步: 每天在指定时间从K8s API获取所有命名空间的ResourceQuota信息</li>
+                    <li>Prometheus同步: 每天在指定时间从Prometheus查询各命名空间的资源使用量</li>
+                    <li>需要先配置K8s集群和Prometheus才能使用定时任务</li>
+                </ul>
             </div>
         </div>
         
@@ -221,6 +338,17 @@
                     </thead>
                     <tbody id="k8sConfigTable"></tbody>
                 </table>
+            </div>
+            
+            <div class="card">
+                <h2 title="批量导入K8s集群配置，支持Excel文件一次性添加多个集群">批量导入集群配置</h2>
+                <div class="form-group">
+                    <input type="file" id="k8sImportFile" accept=".xlsx" style="display: none;">
+                    <button class="btn btn-success" onclick="document.getElementById('k8sImportFile').click()">选择Excel文件</button>
+                    <button class="btn btn-success" onclick="importK8sConfigs()">导入</button>
+                    <button class="btn btn-secondary" onclick="downloadK8sTemplate()">下载模板</button>
+                </div>
+                <div id="k8sImportResult"></div>
             </div>
         </div>
         
@@ -265,6 +393,17 @@
             </div>
             
             <div class="card">
+                <h2 title="批量导入Prometheus配置，支持Excel文件批量添加">批量导入配置</h2>
+                <div class="form-group">
+                    <input type="file" id="prometheusImportFile" accept=".xlsx" style="display: none;">
+                    <button class="btn btn-success" onclick="document.getElementById('prometheusImportFile').click()">选择Excel文件</button>
+                    <button class="btn btn-success" onclick="importPrometheusConfigs()">导入</button>
+                    <button class="btn btn-secondary" onclick="downloadPrometheusTemplate()">下载模板</button>
+                </div>
+                <div id="prometheusImportResult"></div>
+            </div>
+            
+            <div class="card">
                 <h2 title="PromQL查询规则说明，用于理解数据来源">PromQL查询规则说明</h2>
                 <div style="font-size:13px;color:#666;">
                     <details>
@@ -299,9 +438,11 @@
                 document.getElementById(tab.dataset.tab).classList.add('active');
                 
                 if (tab.dataset.tab === 'quota') loadQuotas();
+                if (tab.dataset.tab === 'namespace-quota') loadNamespaceQuotas();
                 if (tab.dataset.tab === 'report') loadReports();
                 if (tab.dataset.tab === 'view') loadViewDates();
                 if (tab.dataset.tab === 'export') loadExportDates();
+                if (tab.dataset.tab === 'scheduler') loadSchedulerConfig();
                 if (tab.dataset.tab === 'k8s') loadK8sConfigs();
                 if (tab.dataset.tab === 'prometheus') loadPrometheusConfigs();
             });
@@ -323,6 +464,36 @@
                     </td>
                 </tr>
             `).join('');
+            
+            // Load K8s clusters for sync
+            await loadK8sClustersForQuotaSync();
+        }
+        
+        async function loadK8sClustersForQuotaSync() {
+            const res = await fetch(`${API_BASE}/k8s/configs`);
+            const configs = await res.json();
+            
+            const quotaList = document.getElementById('quotaK8sClusterList');
+            const nsQuotaList = document.getElementById('nsQuotaK8sClusterList');
+            
+            const checkboxHtml = configs.map(c => `
+                <div style="margin:5px 0;">
+                    <label><input type="checkbox" value="${c.id}" data-name="${c.name}"> ${c.name}</label>
+                </div>
+            `).join('');
+            
+            if (quotaList) quotaList.innerHTML = checkboxHtml || '<span style="color:#999;">暂无配置的K8s集群</span>';
+            if (nsQuotaList) nsQuotaList.innerHTML = checkboxHtml || '<span style="color:#999;">暂无配置的K8s集群</span>';
+        }
+        
+        function toggleAllQuotaClusters(checked) {
+            const checkboxes = document.querySelectorAll('#quotaK8sClusterList input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = checked);
+        }
+        
+        function toggleAllNsQuotaClusters(checked) {
+            const checkboxes = document.querySelectorAll('#nsQuotaK8sClusterList input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = checked);
         }
         
         function editQuota(cloudId, projectName, cpuQuota, memoryQuota) {
@@ -359,6 +530,71 @@
             } else {
                 alert('修改失败');
             }
+        }
+        
+        async function syncProjectQuotaFromK8s() {
+            const checkboxes = document.querySelectorAll('#quotaK8sClusterList input[type="checkbox"]:checked');
+            if (checkboxes.length === 0) {
+                alert('请至少选择一个K8s集群');
+                return;
+            }
+            
+            let totalImported = 0;
+            let totalUpdated = 0;
+            const div = document.getElementById('quotaSyncResult');
+            div.innerHTML = '<span style="color:#666;">同步中...</span>';
+            
+            for (const checkbox of checkboxes) {
+                const configId = checkbox.value;
+                try {
+                    const res = await fetch(`${API_BASE}/k8s/sync-project-quota`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({config_id: configId})
+                    });
+                    const result = await res.json();
+                    totalImported += result.imported || 0;
+                    totalUpdated += result.updated || 0;
+                } catch (e) {
+                    console.error('Sync error:', e);
+                }
+            }
+            
+            div.innerHTML = `<div class="alert alert-success">同步完成: 导入 ${totalImported}, 更新 ${totalUpdated}</div>`;
+            loadQuotas();
+        }
+        
+        async function syncNsQuotaFromK8s() {
+            const checkboxes = document.querySelectorAll('#nsQuotaK8sClusterList input[type="checkbox"]:checked');
+            if (checkboxes.length === 0) {
+                alert('请至少选择一个K8s集群');
+                return;
+            }
+            
+            let totalImported = 0;
+            let totalUpdated = 0;
+            const div = document.getElementById('nsQuotaSyncResult');
+            div.innerHTML = '<span style="color:#666;">同步中...</span>';
+            
+            for (const checkbox of checkboxes) {
+                const configId = checkbox.value;
+                const clusterName = checkbox.dataset.name;
+                try {
+                    const res = await fetch(`${API_BASE}/k8s/sync`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({config_id: configId})
+                    });
+                    const result = await res.json();
+                    totalImported += result.imported || 0;
+                    totalUpdated += result.updated || 0;
+                } catch (e) {
+                    console.error('Sync error:', e);
+                }
+            }
+            
+            div.innerHTML = `<div class="alert alert-success">同步完成: 导入 ${totalImported}, 更新 ${totalUpdated}</div>`;
+            loadNamespaceQuotas();
         }
         
         async function downloadQuotaTemplate() {
@@ -398,6 +634,113 @@
             if (!confirm('确定删除?')) return;
             await fetch(`${API_BASE}/quotas/${cloudId}`, { method: 'DELETE' });
             loadQuotas();
+        }
+        
+        // Namespace Quota functions
+        async function loadNamespaceQuotas() {
+            const cluster = document.getElementById('nsQuotaFilterCluster')?.value || '';
+            const url = cluster ? `${API_BASE}/k8s/quotas?cluster=${cluster}` : `${API_BASE}/k8s/quotas`;
+            const res = await fetch(url);
+            const quotas = await res.json();
+            
+            const tbody = document.getElementById('nsQuotaTable');
+            tbody.innerHTML = quotas.map(q => {
+                const cpuRate = q.cpu_limit > 0 ? (q.cpu_used / q.cpu_limit * 100).toFixed(2) : '0';
+                const memRate = q.memory_limit > 0 ? (q.memory_used / q.memory_limit * 100).toFixed(2) : '0';
+                const podsRate = q.pods_limit > 0 ? (q.pods_used / q.pods_limit * 100).toFixed(2) : '0';
+                const storageRate = q.storage_limit > 0 ? (q.storage_used / q.storage_limit * 100).toFixed(2) : '0';
+                return `
+                    <tr>
+                        <td>${q.cluster_name}</td>
+                        <td>${q.namespace}</td>
+                        <td>${q.project_name || '-'}</td>
+                        <td>${q.cpu_limit}</td>
+                        <td>${q.cpu_used}</td>
+                        <td class="${getRateClass(cpuRate)}">${cpuRate}%</td>
+                        <td>${q.memory_limit.toFixed(2)} GB</td>
+                        <td>${q.memory_used.toFixed(2)} GB</td>
+                        <td class="${getRateClass(memRate)}">${memRate}%</td>
+                        <td>${q.pods_limit}</td>
+                        <td>${q.pods_used}</td>
+                        <td>${q.storage_limit.toFixed(2)} GB</td>
+                        <td>${q.storage_used.toFixed(2)} GB</td>
+                        <td><button class="btn btn-danger btn-sm" onclick="deleteNsQuota('${q.cluster_name}', '${q.namespace}')">删除</button></td>
+                    </tr>
+                `;
+            }).join('');
+            
+            // Load cluster options
+            const k8sRes = await fetch(`${API_BASE}/k8s/configs`);
+            const k8sConfigs = await k8sRes.json();
+            const filterSelect = document.getElementById('nsQuotaFilterCluster');
+            if (filterSelect) {
+                filterSelect.innerHTML = '<option value="">全部</option>' + k8sConfigs.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+            }
+        }
+        
+        async function importNsQuota() {
+            const fileInput = document.getElementById('nsQuotaFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('请选择文件');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const res = await fetch(`${API_BASE}/k8s/quotas/import`, {
+                method: 'POST',
+                body: formData
+            });
+            const result = await res.json();
+            
+            const div = document.getElementById('nsQuotaImportResult');
+            if (result.success) {
+                div.innerHTML = `<div class="alert alert-success">导入成功: ${result.imported} 条</div>`;
+                loadNamespaceQuotas();
+            } else {
+                div.innerHTML = `<div class="alert alert-error">导入失败: ${result.errors?.join(', ')}</div>`;
+            }
+        }
+        
+        async function downloadNsQuotaTemplate() {
+            window.location.href = `${API_BASE}/templates/namespace-quota`;
+        }
+        
+        async function deleteNsQuota(cluster, namespace) {
+            if (!confirm('确定删除?')) return;
+            await fetch(`${API_BASE}/k8s/quotas/${cluster}/${namespace}`, { method: 'DELETE' });
+            loadNamespaceQuotas();
+        }
+        
+        // Scheduler Config functions
+        async function loadSchedulerConfig() {
+            const res = await fetch(`${API_BASE}/scheduler/config`);
+            const config = await res.json();
+            document.getElementById('schedulerEnabled').checked = config.enabled || false;
+            document.getElementById('schedulerNsQuotaHour').value = config.namespace_quota_hour || 2;
+            document.getElementById('schedulerPrometheusHour').value = config.prometheus_sync_hour || 3;
+            document.getElementById('schedulerInterval').value = config.interval_hours || 24;
+        }
+        
+        async function saveSchedulerConfig() {
+            const enabled = document.getElementById('schedulerEnabled').checked;
+            const namespace_quota_hour = parseInt(document.getElementById('schedulerNsQuotaHour').value);
+            const prometheus_sync_hour = parseInt(document.getElementById('schedulerPrometheusHour').value);
+            const interval_hours = parseInt(document.getElementById('schedulerInterval').value);
+            
+            const res = await fetch(`${API_BASE}/scheduler/config?enabled=${enabled}&namespace_quota_hour=${namespace_quota_hour}&prometheus_sync_hour=${prometheus_sync_hour}&interval_hours=${interval_hours}`, {
+                method: 'POST'
+            });
+            
+            const result = await res.json();
+            const div = document.getElementById('schedulerResult');
+            if (result.enabled !== undefined) {
+                div.innerHTML = `<div class="alert alert-success">保存成功！</div>`;
+            } else {
+                div.innerHTML = `<div class="alert alert-error">保存失败</div>`;
+            }
         }
         
         const uploadArea = document.getElementById('uploadArea');
@@ -500,6 +843,11 @@
                 '<p style="color: #999;">暂无可导出的数据</p>';
         }
         
+        function toggleAllExportDates(checked) {
+            const checkboxes = document.querySelectorAll('#exportDateList input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = checked);
+        }
+        
         async function exportReport() {
             const checkboxes = document.querySelectorAll('#exportDateList input:checked');
             const dates = Array.from(checkboxes).map(c => c.value);
@@ -522,7 +870,6 @@
                     <td>${c.name}</td>
                     <td>${c.use_projectquota ? 'ProjectQuota' : 'Namespace Quota'}</td>
                     <td>
-                        <button class="btn btn-success btn-sm" onclick="syncK8sConfig('${c.id}')">同步</button>
                         <button class="btn btn-danger btn-sm" onclick="deleteK8sConfig('${c.id}')">删除</button>
                     </td>
                 </tr>
@@ -564,10 +911,50 @@
             alert(`同步完成: 导入 ${result.imported}, 更新 ${result.updated}`);
         }
         
+        async function syncProjectQuota(id) {
+            const res = await fetch(`${API_BASE}/k8s/sync-project-quota`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({config_id: id})
+            });
+            const result = await res.json();
+            alert(`同步项目配额完成: 导入 ${result.imported}, 更新 ${result.updated}`);
+        }
+        
         async function deleteK8sConfig(id) {
             if (!confirm('确定删除?')) return;
             await fetch(`${API_BASE}/k8s/configs/${id}`, {method: 'DELETE'});
             loadK8sConfigs();
+        }
+        
+        async function importK8sConfigs() {
+            const fileInput = document.getElementById('k8sImportFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('请选择文件');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const res = await fetch(`${API_BASE}/k8s/configs/import`, {
+                method: 'POST',
+                body: formData
+            });
+            const result = await res.json();
+            
+            const div = document.getElementById('k8sImportResult');
+            if (result.success) {
+                div.innerHTML = `<div class="alert alert-success">导入成功: ${result.imported} 条</div>`;
+                loadK8sConfigs();
+            } else {
+                div.innerHTML = `<div class="alert alert-error">导入失败: ${result.errors?.join(', ')}</div>`;
+            }
+        }
+        
+        async function downloadK8sTemplate() {
+            window.location.href = `${API_BASE}/templates/k8s-config`;
         }
         
         // Prometheus Config Tab
@@ -628,6 +1015,36 @@
             if (!confirm('确定删除?')) return;
             await fetch(`${API_BASE}/prometheus/configs/${id}`, {method: 'DELETE'});
             loadPrometheusConfigs();
+        }
+        
+        async function importPrometheusConfigs() {
+            const fileInput = document.getElementById('prometheusImportFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('请选择文件');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const res = await fetch(`${API_BASE}/prometheus/import`, {
+                method: 'POST',
+                body: formData
+            });
+            const result = await res.json();
+            
+            const div = document.getElementById('prometheusImportResult');
+            if (result.success) {
+                div.innerHTML = `<div class="alert alert-success">导入成功: ${result.imported} 条</div>`;
+                loadPrometheusConfigs();
+            } else {
+                div.innerHTML = `<div class="alert alert-error">导入失败: ${result.errors?.join(', ')}</div>`;
+            }
+        }
+        
+        async function downloadPrometheusTemplate() {
+            window.location.href = `${API_BASE}/templates/prometheus-config`;
         }
         
         loadQuotas();

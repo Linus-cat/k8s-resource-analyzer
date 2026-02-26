@@ -285,3 +285,36 @@ class NamespaceQuotaStorage:
         del quotas[key]
         self._save_quotas(quotas)
         return True
+
+
+class SchedulerConfigStorage:
+    def __init__(self, data_dir: str = "data"):
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.config_file = self.data_dir / "scheduler_config.json"
+        self._init_file()
+
+    def _init_file(self):
+        if not self.config_file.exists():
+            self._save({"enabled": False, "namespace_quota_hour": 2, "prometheus_sync_hour": 3, "interval_hours": 24})
+
+    def _load(self) -> Dict:
+        with open(self.config_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _save(self, config: Dict):
+        with open(self.config_file, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+
+    def get(self) -> Dict:
+        return self._load()
+
+    def update(self, enabled: bool, namespace_quota_hour: int, prometheus_sync_hour: int, interval_hours: int) -> Dict:
+        config = {
+            "enabled": enabled,
+            "namespace_quota_hour": namespace_quota_hour,
+            "prometheus_sync_hour": prometheus_sync_hour,
+            "interval_hours": interval_hours
+        }
+        self._save(config)
+        return config

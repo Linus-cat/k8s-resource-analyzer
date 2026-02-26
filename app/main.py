@@ -16,7 +16,7 @@ from app.models import (
     PrometheusConfig, PrometheusConfigCreate,
     NamespaceQuota, SyncResult
 )
-from app.storage import Storage, ReportStorage, MemoryReportCache, K8sConfigStorage, PrometheusConfigStorage, NamespaceQuotaStorage
+from app.storage import Storage, ReportStorage, MemoryReportCache, K8sConfigStorage, PrometheusConfigStorage, NamespaceQuotaStorage, SchedulerConfigStorage
 from app.parser import ReportParser
 from app.quota_manager import QuotaManager
 from app.calculator import Calculator
@@ -30,6 +30,7 @@ report_cache = MemoryReportCache()
 k8s_config_storage = K8sConfigStorage(str(BASE_DIR / "data"))
 prometheus_config_storage = PrometheusConfigStorage(str(BASE_DIR / "data"))
 namespace_quota_storage = NamespaceQuotaStorage(str(BASE_DIR / "data"))
+scheduler_config_storage = SchedulerConfigStorage(str(BASE_DIR / "data"))
 
 quota_manager = QuotaManager(quota_storage)
 calculator = Calculator(quota_storage)
@@ -266,11 +267,100 @@ async def sync_k8s_config(config_id: str):
     return result
 
 
+@app.post("/api/k8s/sync-project-quota", response_model=SyncResult)
+async def sync_project_quota(config_id: str):
+    config = k8s_config_storage.get(config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    
+    from app.k8s_client import sync_k8s_quotas
+    result = sync_k8s_quotas(config.kubeconfig, quota_storage, use_projectquota=True)
+    return result
+
+
 @app.get("/api/k8s/quotas", response_model=List[NamespaceQuota])
 async def get_namespace_quotas(cluster: str = None):
     if cluster:
         return namespace_quota_storage.get_by_cluster(cluster)
     return namespace_quota_storage.get_all()
+
+
+@app.delete("/api/k8s/quotas/{cluster_name}/{namespace}")
+async def delete_namespace_quota(cluster_name: str, namespace: str):
+    if not namespace_quota_storage.delete(cluster_name, namespace):
+        raise HTTPException(status_code=404, detail="Namespace quota not found")
+    return {"success": True}
+
+
+@app.post("/api/k8s/quotas/import", response_model=ImportResult)
+async def import_namespace_quotas(file: UploadFile = File(...)):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(tmp_path)
+        ws = wb.active
+        
+        imported = 0
+        errors = []
+        
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            try:
+                cluster_name, namespace_name, project_name, cpu_limit, memory_limit, cpu_used, memory_used = row[:7]
+                if not cluster_name or not namespace_name:
+                    errors.append(f"第{row_idx}行: 缺少集群名称或命名空间")
+                    continue
+                
+                ns_quota = NamespaceQuota(
+                    cluster_name=str(cluster_name),
+                    namespace=str(namespace_name),
+                    project_name=str(project_name) if project_name else "",
+                    cpu_limit=float(cpu_limit) if cpu_limit else 0,
+                    memory_limit=float(memory_limit) if memory_limit else 0,
+                    cpu_used=float(cpu_used) if cpu_used else 0,
+                    memory_used=float(memory_used) if memory_used else 0
+                )
+                namespace_quota_storage.save(ns_quota)
+                imported += 1
+            except Exception as e:
+                errors.append(f"第{row_idx}行: {str(e)}")
+        
+        return ImportResult(success=True, imported=imported, updated=0, errors=errors)
+    except Exception as e:
+        return ImportResult(success=False, imported=0, updated=0, errors=[f"读取文件失败: {str(e)}"])
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.get("/api/templates/namespace-quota")
+async def download_namespace_quota_template():
+    from openpyxl import Workbook
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "命名空间配额模板"
+    
+    headers = ["集群名称", "命名空间", "项目名称", "CPU配额(核)", "内存配额(GB)", "CPU已用(核)", "内存已用(GB)"]
+    ws.append(headers)
+    
+    ws.append(["prod-cluster", "namespace-a", "项目A", 100, 200, 50, 100])
+    ws.append(["prod-cluster", "namespace-b", "项目B", 50, 100, 20, 40])
+    
+    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
+        ws.column_dimensions[col].width = 18
+    
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=namespace_quota_template.xlsx"}
+    )
 
 
 @app.get("/api/prometheus/configs", response_model=List[PrometheusConfig])
@@ -361,6 +451,121 @@ async def import_prometheus_configs(file: UploadFile = File(...)):
                 )
                 
                 if prometheus_config_storage.add(new_config):
+                    imported += 1
+                else:
+                    errors.append(f"第{row_idx}行: 配置已存在")
+            except Exception as e:
+                errors.append(f"第{row_idx}行: {str(e)}")
+        
+        return ImportResult(success=True, imported=imported, updated=0, errors=errors)
+    except Exception as e:
+        return ImportResult(success=False, imported=0, updated=0, errors=[f"读取文件失败: {str(e)}"])
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.get("/api/templates/prometheus-config")
+async def download_prometheus_config_template():
+    from openpyxl import Workbook
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Prometheus配置模板"
+    
+    headers = ["配置名称", "Prometheus URL", "集群名称", "精确同步"]
+    ws.append(headers)
+    
+    ws.append(["prod-prometheus", "http://prometheus:9090", "prod-cluster", True])
+    ws.append(["dev-prometheus", "http://prometheus-dev:9090", "dev-cluster", False])
+    
+    for col in ['A', 'B', 'C', 'D']:
+        ws.column_dimensions[col].width = 25
+    
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=prometheus_config_template.xlsx"}
+    )
+
+
+@app.get("/api/scheduler/config")
+async def get_scheduler_config():
+    return scheduler_config_storage.get()
+
+
+@app.post("/api/scheduler/config")
+async def update_scheduler_config(
+    enabled: bool,
+    namespace_quota_hour: int = 2,
+    prometheus_sync_hour: int = 3,
+    interval_hours: int = 24
+):
+    return scheduler_config_storage.update(enabled, namespace_quota_hour, prometheus_sync_hour, interval_hours)
+
+
+@app.get("/api/templates/k8s-config")
+async def download_k8s_config_template():
+    from openpyxl import Workbook
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "K8s集群配置模板"
+    
+    headers = ["集群名称", "Kubeconfig (Base64编码或原始内容)", "使用ProjectQuota"]
+    ws.append(headers)
+    
+    ws.append(["prod-cluster", "YXdzOi4uLg==", True])
+    ws.append(["dev-cluster", "YXdzOi4uLg==", False])
+    
+    for col in ['A', 'B', 'C']:
+        ws.column_dimensions[col].width = 30
+    
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=k8s_config_template.xlsx"}
+    )
+
+
+@app.post("/api/k8s/configs/import", response_model=ImportResult)
+async def import_k8s_configs(file: UploadFile = File(...)):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(tmp_path)
+        ws = wb.active
+        
+        imported = 0
+        errors = []
+        
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            try:
+                name, kubeconfig, use_projectquota = row[:3]
+                if not name or not kubeconfig:
+                    errors.append(f"第{row_idx}行: 缺少集群名称或kubeconfig")
+                    continue
+                
+                import uuid
+                new_config = K8sConfig(
+                    id=str(uuid.uuid4()),
+                    name=str(name),
+                    kubeconfig=str(kubeconfig),
+                    use_projectquota=bool(use_projectquota) if use_projectquota is not None else True
+                )
+                
+                if k8s_config_storage.add(new_config):
                     imported += 1
                 else:
                     errors.append(f"第{row_idx}行: 配置已存在")
