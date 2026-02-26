@@ -1,6 +1,6 @@
 # K8s Resource Analyzer
 
-K8s集群资源使用率统计分析工具
+K8s集群项目及命名空间资源使用率统计分析工具
 
 ## 安装
 
@@ -12,7 +12,8 @@ pip install -r requirements.txt
 
 ```bash
 cd k8s-resource-analyzer
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 或者
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 访问 http://localhost:8000
@@ -34,7 +35,11 @@ uvicorn app.main:app --reload --port 8000
 4. **导出**: 
    - 选择日期范围导出Excel报告
    - 导出格式: 云序号、日期(Y/M/D)、CPU使用率%、内存使用率%
-
+   
+5. **数据同步（可定时）**: 
+   - 接入k8s集群，同步项目及命名空间配额
+   - 接入prometheus，同步容器进一天峰值总量，汇总计算项目资源使用率
+     
 ## API
 
 | 方法 | 路径 | 功能 |
