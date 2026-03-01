@@ -60,4 +60,4 @@ class Calculator:
 
     def format_date(self, date_str: str) -> str:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
-        return dt.strftime("%Y/%-m/%-d").replace("/0", "/").replace("/-", "/")
+        return dt.strftime("%Y-%m-%d")
