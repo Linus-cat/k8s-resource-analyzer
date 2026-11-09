@@ -57,9 +57,28 @@
         
         .hidden { display: none; }
         
-        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
         .modal-content { background: white; max-width: 500px; margin: 100px auto; padding: 20px; border-radius: 8px; }
         .modal-content h3 { margin-top: 0; }
+        
+        /* ---- 校验失败弹窗 ---- */
+        .validate-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.45); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+        .validate-modal.hidden { display: none; }
+        .validate-box { background: #fff; width: 90%; max-width: 560px; max-height: 70vh; display: flex; flex-direction: column; border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,0.25); overflow: hidden; }
+        .validate-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #f0d9da; background: #fff5f5; }
+        .validate-header .title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; color: #c0392b; }
+        .validate-header .title .icon { width: 22px; height: 22px; border-radius: 50%; background: #e74c3c; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+        .validate-close { border: none; background: none; font-size: 22px; line-height: 1; color: #999; cursor: pointer; padding: 0 4px; }
+        .validate-close:hover { color: #555; }
+        .validate-body { padding: 16px 20px; overflow-y: auto; }
+        .validate-summary { color: #666; font-size: 13px; margin-bottom: 12px; }
+        .validate-file { margin-bottom: 14px; }
+        .validate-filename { font-weight: 600; color: #333; font-size: 14px; margin-bottom: 6px; word-break: break-all; }
+        .validate-item { background: #fafafa; border-left: 3px solid #e74c3c; border-radius: 4px; padding: 8px 12px; margin-bottom: 6px; }
+        .validate-item .where { color: #c0392b; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+        .validate-item .snippet { font-family: Consolas, Menlo, monospace; font-size: 12px; color: #555; background: #f1f1f1; border-radius: 3px; padding: 4px 8px; word-break: break-all; line-height: 1.5; }
+        .validate-footer { padding: 12px 20px; border-top: 1px solid #eee; text-align: right; background: #fff; }
+        .validate-footer .btn { margin-right: 0; }
     </style>
 </head>
 <body>
@@ -208,8 +227,8 @@
         
         <div id="report" class="tab-content">
             <div class="card">
-                <h2>上传日报文件</h2 class="form-group>
-                <div">
+                <h2>上传日报文件</h2>
+                <div class="form-group">
                     <button class="btn btn-secondary" onclick="downloadReportTemplate()">下载模板</button>
                 </div>
                 <div class="upload-area" id="uploadArea">
@@ -757,6 +776,13 @@
         reportFiles.addEventListener('change', () => handleReportUpload(reportFiles.files));
         
         // ---- 日报文件内容前置校验（与后端 ReportParser.validate_content 语义一致）----
+        // 截取片段用于展示，避免输出整行/整个文件内容
+        function clipLine(line, limit) {
+            line = (line || '').trim();
+            if (line.length <= limit) return line;
+            return line.slice(0, limit) + '...';
+        }
+
         function validateReportContent(content) {
             const errors = [];
             const lines = content.split('\n');
@@ -772,13 +798,61 @@
             lines.forEach((line, idx) => {
                 const lineNo = idx + 1;
                 for (const m of line.matchAll(brokenHanziRe)) {
-                    errors.push(`第${lineNo}行: 检测到单个汉字被断字成独立字段「${m[1]}」`);
+                    errors.push({
+                        lineNo,
+                        type: '断字',
+                        desc: `检测到单个汉字「${m[1]}」被错误断字成独立字段`,
+                        snippet: clipLine(line, 80)
+                    });
                 }
                 for (const m of line.matchAll(errorGluedRe)) {
-                    errors.push(`第${lineNo}行: 负载参数行末尾数字后直接拼接了 'Error from server'`);
+                    errors.push({
+                        lineNo,
+                        type: '粘连',
+                        desc: "负载参数行末尾数字后直接拼接了 'Error from server'",
+                        snippet: clipLine(line, 80)
+                    });
                 }
             });
             return errors;
+        }
+
+        // 打开校验失败弹窗，清晰展示每个失败文件及其异常明细
+        function showValidateModal(failures) {
+            const body = document.getElementById('validateBody');
+
+            const summary = `<div class="validate-summary">共 ${failures.length} 个文件未通过内容校验，已阻断本次上传，请修改后重试：</div>`;
+
+            const fileHtml = failures.map(f => {
+                const items = f.errors.map(e => `
+                    <div class="validate-item">
+                        <div class="where">第 ${e.lineNo} 行 · ${e.type}</div>
+                        <div class="snippet">${escapeHtml(e.snippet)}</div>
+                    </div>
+                `).join('');
+                return `
+                    <div class="validate-file">
+                        <div class="validate-filename">📄 ${escapeHtml(f.filename)}</div>
+                        ${items}
+                    </div>
+                `;
+            }).join('');
+
+            body.innerHTML = summary + fileHtml;
+            document.getElementById('validateModal').classList.remove('hidden');
+        }
+
+        function closeValidateModal() {
+            document.getElementById('validateModal').classList.add('hidden');
+        }
+
+        // 转义 HTML，防止文件名/片段中的特殊字符破坏布局
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
         }
 
         async function handleReportUpload(files) {
@@ -795,15 +869,15 @@
                         validationFailures.push({ filename: file.name, errors: fileErrors });
                     }
                 } catch (e) {
-                    validationFailures.push({ filename: file.name, errors: ['文件读取失败，无法校验内容'] });
+                    validationFailures.push({
+                        filename: file.name,
+                        errors: [{ lineNo: '-', type: '读取', desc: '文件读取失败，无法校验内容', snippet: '' }]
+                    });
                 }
             }
 
             if (validationFailures.length > 0) {
-                const failureHtml = validationFailures.map(f =>
-                    `<strong>${f.filename}</strong>: ${f.errors.join('; ')}`
-                ).join('<br>');
-                div.innerHTML = `<div class="alert alert-error">上传已阻断，以下文件内容校验失败：<br>${failureHtml}</div>`;
+                showValidateModal(validationFailures);
                 return;
             }
 
@@ -1098,5 +1172,19 @@
         
         loadQuotas();
     </script>
+
+    <!-- 日报内容校验失败弹窗 -->
+    <div id="validateModal" class="validate-modal hidden">
+        <div class="validate-box">
+            <div class="validate-header">
+                <div class="title"><span class="icon">!</span>文件内容校验未通过</div>
+                <button class="validate-close" onclick="closeValidateModal()">&times;</button>
+            </div>
+            <div class="validate-body" id="validateBody"></div>
+            <div class="validate-footer">
+                <button class="btn btn-primary" onclick="closeValidateModal()">知道了</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
