@@ -154,6 +154,12 @@ async def upload_reports(files: List[UploadFile] = File(...)):
             content = await file.read()
             text_content = content.decode("utf-8")
 
+            # 前置校验：命中断字/粘连异常时阻断该文件的解析与入库
+            validation_errors = ReportParser.validate_content(text_content)
+            if validation_errors:
+                errors.append(f"{file.filename}: " + "; ".join(validation_errors))
+                continue
+
             project_data = ReportParser.parse_file(text_content)
             project_usages = calculator.process_report(project_data)
 

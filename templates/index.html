@@ -756,9 +756,58 @@
         });
         reportFiles.addEventListener('change', () => handleReportUpload(reportFiles.files));
         
+        // ---- 日报文件内容前置校验（与后端 ReportParser.validate_content 语义一致）----
+        function validateReportContent(content) {
+            const errors = [];
+            const lines = content.split('\n');
+            // 校验项 1：孤立单个汉字作为一个完整字段（地名被错误断字）。
+            // 判定依据：正常字段「乐涌;」中「涌;」前是汉字「乐」，不会命中；
+            // 仅当单个汉字前是分号或行首、后紧跟分号（如「;东;」「;涌;」或行首「东;」）
+            // 时才命中，避免误伤「乐涌;」「东涌;」等正确地名。
+            const brokenHanziRe = /(?:^|;)([\u4e00-\u9fa5]);/g;
+            // 校验项 2：负载参数行末尾的数字后直接拼接 "Error from server"。
+            const errorGluedRe = /[0-9]Error from server/g;
+
+            lines.forEach((line, idx) => {
+                const lineNo = idx + 1;
+                for (const m of line.matchAll(brokenHanziRe)) {
+                    errors.push(`第${lineNo}行: 检测到单个汉字被断字成独立字段「${m[1]}」`);
+                }
+                for (const m of line.matchAll(errorGluedRe)) {
+                    errors.push(`第${lineNo}行: 负载参数行末尾数字后直接拼接了 'Error from server'`);
+                }
+            });
+            return errors;
+        }
+
         async function handleReportUpload(files) {
+            const div = document.getElementById('uploadResult');
+            const fileList = Array.from(files);
+
+            // 前置校验：批量读取所有文件，命中任一异常即阻断本次上传
+            const validationFailures = [];
+            for (const file of fileList) {
+                try {
+                    const content = await file.text();
+                    const fileErrors = validateReportContent(content);
+                    if (fileErrors.length > 0) {
+                        validationFailures.push({ filename: file.name, errors: fileErrors });
+                    }
+                } catch (e) {
+                    validationFailures.push({ filename: file.name, errors: ['文件读取失败，无法校验内容'] });
+                }
+            }
+
+            if (validationFailures.length > 0) {
+                const failureHtml = validationFailures.map(f =>
+                    `<strong>${f.filename}</strong>: ${f.errors.join('; ')}`
+                ).join('<br>');
+                div.innerHTML = `<div class="alert alert-error">上传已阻断，以下文件内容校验失败：<br>${failureHtml}</div>`;
+                return;
+            }
+
             const formData = new FormData();
-            for (const file of files) {
+            for (const file of fileList) {
                 formData.append('files', file);
             }
             
@@ -768,7 +817,6 @@
             });
             const result = await res.json();
             
-            const div = document.getElementById('uploadResult');
             if (result.errors.length > 0) {
                 div.innerHTML = `<div class="alert alert-error">上传出错: ${result.errors.join(', ')}</div>`;
             } else {

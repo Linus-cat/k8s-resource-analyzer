@@ -17,9 +17,9 @@
 <h1>K8s集群资源使用率统计分析工具 - 开发文档</h1>
 <h2>文档信息</h2>
 <ul>
-<li><strong>版本</strong>: 1.1.0</li>
+<li><strong>版本</strong>: 1.2.0</li>
 <li><strong>创建日期</strong>: 2026-02-25</li>
-<li><strong>更新日期</strong>: 2026-02-26</li>
+<li><strong>更新日期</strong>: 2026-11-09</li>
 <li><strong>技术栈</strong>: Python 3.10 + FastAPI + openpyxl</li>
 <li><strong>作者</strong>: 骆玉宝</li>
 <li><strong>邮箱</strong>: ybluo@alauda.io</li>
@@ -38,6 +38,7 @@
 <li><strong>多Prometheus支持</strong>：可配置多个Prometheus实例</li>
 <li><strong>准确数据同步</strong>：基于副本数去重的精确同步，适合滚动更新场景</li>
 <li><strong>日报数据解析</strong>：从文件读取各命名空间的CPU、内存使用数据</li>
+<li><strong>日报文件内容前置校验</strong>：上传前自动扫描文件内容，识别「单个汉字被断字成独立字段」「负载参数行末尾数字后直接拼接 Error from server」两类异常格式，命中即阻断上传并提示失败文件名</li>
 <li><strong>使用率计算</strong>：按项目汇总资源使用量，结合配额计算使用率</li>
 <li><strong>Excel导出</strong>：生成标准化报告，支持多日期导出</li>
 <li><strong>定时任务</strong>：自动同步K8s配额和Prometheus数据</li>
@@ -204,7 +205,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 <li>配置Prometheus同步时间</li>
 <li>配置同步间隔</li>
 </ul>
-<h3>4.7 数据导出</h3>
+<h3>4.7 日报上传与内容校验</h3>
+<p>日报文件为分号分隔的文本，正常每行 4 段：<code>项目名称;命名空间名称;CPU使用总量(核);内存使用总量(bytes)</code>。</p>
+<p>上传前系统会对文件内容做<strong>前置校验</strong>，命中任一异常规则即阻断本次上传，并明确展示校验失败的文件名：</p>
+<table>
+<thead>
+<tr><th>校验项</th><th>异常规则</th><th>判定依据</th></tr>
+</thead>
+<tbody>
+<tr><td>单个汉字断字</td><td><code>(?:^|;)[\u4e00-\u9fa5];</code></td><td>当单个汉字被错误切断成一个独立字段（如 <code>;东;</code>、<code>;涌;</code>、行首 <code>东;</code>）时命中，正常地名如「乐涌;」「东涌;」不会被误伤</td></tr>
+<tr><td>负载参数粘连 Error</td><td><code>[0-9]Error from server</code></td><td>负载参数第 4 段（数字）末尾直接拼接 <code>Error from server</code>，说明上报命令出错信息被粘连到参数行</td></tr>
+</tbody>
+</table>
+<p>校验在前后端双重执行：前端 <code>handleReportUpload()</code> 在发起请求前批量校验并阻断；后端 <code>ReportParser.validate_content()</code> 在解析前再次权威校验，命中即跳过该文件的解析与入库，避免异常数据污染计算与报表结果。</p>
+<h3>4.8 数据导出</h3>
 <ul>
 <li>选择日期（支持全选）</li>
 <li>导出格式：主键/周期/CPU利用率/内存利用率</li>
@@ -448,14 +462,26 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 </table>
 <hr />
 <h2>6. 核心模块说明</h2>
-<h3>6.1 k8s_client.py - K8s API客户端</h3>
+<h3>6.1 parser.py - 日报解析与内容校验</h3>
+<ul>
+<li>解析分号分隔的日报文件（4 段：项目名称、命名空间、CPU、内存）</li>
+<li><code>parse_file()</code>：逐行解析并聚合为项目级数据结构</li>
+<li><code>validate_content()</code>：上传前的内容前置校验，返回命中异常的描述列表（含行号与匹配片段）
+  <ul>
+  <li><code>BROKEN_HANZI_PATTERN</code>：识别单个汉字被断字成独立字段（如 <code>;东;</code>、<code>;涌;</code>）</li>
+  <li><code>ERROR_GLUED_PATTERN</code>：识别负载参数行末尾数字后直接拼接 <code>Error from server</code></li>
+  </ul>
+</li>
+<li><code>read_and_parse()</code>：从文件路径读取并解析</li>
+</ul>
+<h3>6.2 k8s_client.py - K8s API客户端</h3>
 <ul>
 <li>解析kubeconfig配置</li>
 <li>调用Kubernetes API获取命名空间、资源配额</li>
 <li>获取资源</li>
 <li>获取ProjectQuota自定义Workload副本数（用于精确同步）</li>
 </ul>
-<h3>6.2 prometheus_client.py - Prometheus客户端</h3>
+<h3>6.3 prometheus_client.py - Prometheus客户端</h3>
 <ul>
 <li>查询CPU/内存使用量</li>
 <li>精确同步模式：根据副本数去重处理滚动更新</li>
@@ -463,7 +489,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 <li>CPU：<code>sum(max by (pod)(max_over_time(irate(container_cpu_usage_seconds_total[5m])[1d:])))</code></li>
 <li>内存：<code>sum(max by (pod)(max_over_time(container_memory_usage_bytes[1d])))</code></li>
 </ul>
-<h3>6.3 scheduler.py - 定时任务</h3>
+<h3>6.4 scheduler.py - 定时任务</h3>
 <ul>
 <li>定时同步K8s命名空间配额</li>
 <li>定时同步Prometheus使用数据</li>
@@ -567,6 +593,10 @@ pyyaml==6.0.1
 A: 确保已上传日报文件，且该日期有匹配配额的項目。</p>
 <p><strong>Q2: 上传文件解析失败</strong>
 A: 检查文件格式是否符合要求，每行格式为：<code>项目名称;命名空间;CPU;内存(bytes)</code></p>
+<p><strong>Q2.1: 上传时报"内容校验失败"，提示单个汉字被断字</strong>
+A: 文件内容中存在地名被错误切断的情况，例如「东涌」「乐涌」被切成了孤立的「东;」「涌;」。请手动修正该文件的断字问题后重新上传。</p>
+<p><strong>Q2.2: 上传时报"内容校验失败"，提示负载参数行拼接 Error from server</strong>
+A: 文件某行的负载参数末尾直接拼接了 <code>Error from server ...</code> 错误信息，说明生成日报时上报命令出错、错误信息粘连到了参数行。请手动删除粘连的 Error 信息（或重新生成该文件）后重新上传。</p>
 <p><strong>Q3: 使用率显示为空</strong>
 A: 确保配额中的项目名称与日报中的项目名称完全匹配。</p>
 <p><strong>Q4: K8s同步失败</strong>

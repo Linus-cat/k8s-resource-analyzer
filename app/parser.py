@@ -10,6 +10,21 @@ class ReportParser:
 
     FILENAME_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
+    # ---- 日报文件内容前置校验规则（增量，不影响原有解析逻辑）----
+
+    # 校验项 1：孤立单个汉字作为一个完整字段（地名被错误断字）。
+    # 判定依据：正常字段如「ms-zssc-prod乐涌;」中的「涌;」前一个字符是汉字「乐」
+    # （既不是分号也不是行首），不会被本正则命中；只有当单个汉字前面是分号或行首、
+    # 后面紧跟分号（即该汉字被单独切断成一个字段，如「;东;」「;涌;」或行首「东;」）
+    # 时才命中，从而避免误伤「乐涌;」「东涌;」等正确地名。
+    BROKEN_HANZI_PATTERN = re.compile(r"(?:^|;)([\u4e00-\u9fa5]);")
+
+    # 校验项 2：负载参数行末尾的数字后直接拼接 "Error from server"。
+    # 判定依据：正常第 4 段是纯数字并以换行结束；出现「数字 + Error from server」
+    # 说明上报命令的出错信息被粘连到参数行，例如
+    # "ms-zssc-prod乐涌;ms-global;30.829;325056608576Error from server (NotFound): ..."
+    ERROR_GLUED_PATTERN = re.compile(r"[0-9]Error from server")
+
     @classmethod
     def extract_date_from_filename(cls, filename: str) -> Optional[str]:
         match = cls.FILENAME_PATTERN.search(filename)
@@ -80,3 +95,33 @@ class ReportParser:
         project_data = cls.parse_file(content)
 
         return date, project_data
+
+    @classmethod
+    def validate_content(cls, content: str) -> List[str]:
+        """对日报文件内容做上传前的前置校验。
+
+        返回命中异常的描述列表（含行号与匹配片段），为空表示校验通过。
+        该校验应在 parse_file 之前执行，命中任一异常即阻断上传与入库，
+        避免断字/粘连错误污染解析与计算结果。
+        """
+        errors = []
+        for line_no, line in enumerate(content.split("\n"), start=1):
+            for match in cls.BROKEN_HANZI_PATTERN.finditer(line):
+                errors.append(
+                    f"第{line_no}行: 检测到单个汉字被断字成独立字段「{match.group(1)}」"
+                    f"（片段: {cls._clip_line(line)}）"
+                )
+            for match in cls.ERROR_GLUED_PATTERN.finditer(line):
+                errors.append(
+                    f"第{line_no}行: 负载参数行末尾数字后直接拼接了 'Error from server'"
+                    f"（片段: {cls._clip_line(line)}）"
+                )
+        return errors
+
+    @staticmethod
+    def _clip_line(line: str, limit: int = 60) -> str:
+        """截取行片段用于异常提示，避免提示信息过长。"""
+        line = line.strip()
+        if len(line) <= limit:
+            return line
+        return line[:limit] + "..."
